@@ -8,21 +8,11 @@ st.set_page_config(page_title="CDC Environmental Justice Index State Explorer", 
 
 st.markdown("""
     <style>
-        .main {
-            background-color: #f5f5f5;
-        }
-        h1, h2, h3 {
-            color: #0071BC;
-        }
-        [data-testid="stSidebar"] {
-            background-color: #e0e0e0;
-        }
-        [data-testid="stHeader"] {
-            background-color: transparent;
-        }
-        [data-testid="stToolbar"] {
-            display: none;
-        }
+        .main { background-color: #f5f5f5; }
+        h1, h2, h3 { color: #0071BC; }
+        [data-testid="stSidebar"] { background-color: #e0e0e0; }
+        [data-testid="stHeader"] { background-color: transparent; }
+        [data-testid="stToolbar"] { display: none; }
         .stDownloadButton > button {
             background-color: #0071BC;
             color: white;
@@ -30,19 +20,68 @@ st.markdown("""
             padding: 0.5em 1em;
             cursor: pointer;
         }
-        .stDownloadButton > button:hover {
-            background-color: #00518f;
-        }
+        .stDownloadButton > button:hover { background-color: #00518f; }
     </style>
 """, unsafe_allow_html=True)
+
+# --- VARIABLE GROUPINGS ---
+EJI_VARIABLE_GROUPS = {
+    "Overall Indices": {
+        "RPL_EJI": "Overall Environmental Justice Index",
+        "RPL_SER": "Social and Environmental Risk Index",
+    },
+    "Environmental Burden (EBM)": {
+        "Air Quality": {
+            "EPL_OZONE": "Ozone Level",
+            "EPL_PM": "Particulate Matter (PM2.5)",
+            "EPL_DSLPM": "Diesel Particulate Matter",
+            "EPL_TOTCR": "Air Toxics Cancer Risk",
+        },
+        "Proximity to Risk Sites": {
+            "EPL_NPL": "Proximity to Superfund Sites",
+            "EPL_TRI": "Proximity to Toxic Release Sites",
+            "EPL_RMP": "Proximity to Risk Management Facilities",
+            "EPL_TSDF": "Proximity to Treatment/Storage/Disposal Facilities",
+        },
+        "Built Environment": {
+            "EPL_PARK": "Access to Green Space",
+            "EPL_HOUAGE": "Lead Paint Indicators (Pre-1960s Housing)",
+            "EPL_WLKIND": "Walkability Index",
+        },
+    },
+    "Social Vulnerability (SVM)": {
+        "Demographic Indicators": {
+            "EPL_MINRTY": "Minority Population",
+            "EPL_AGE65": "Population 65 and Older",
+            "EPL_AGE17": "Population 17 and Younger",
+        },
+        "Socioeconomic Indicators": {
+            "EPL_POV200": "Population Below 200% Poverty Level",
+            "EPL_UNEMP": "Unemployment Rate",
+            "EPL_NOHSDP": "No High School Diploma",
+        },
+        "Housing and Infrastructure": {
+            "EPL_RENTER": "Renter-Occupied Housing",
+            "EPL_MOBILE": "Mobile Homes",
+            "EPL_NOINT": "No Internet Access",
+        },
+    },
+    "Health Vulnerability (HVM)": {
+        "Health Conditions": {
+            "EPL_ASTHMA": "Asthma Rate",
+            "EPL_CANCER": "Cancer Rate",
+            "EPL_BPHIGH": "High Blood Pressure",
+            "EPL_DIABETES": "Diabetes Rate",
+            "EPL_MHLTH": "Poor Mental Health",
+        }
+    }
+}
 
 # --- DATA LOADING ---
 @st.cache_data
 def load_data():
-    """Load and preprocess the EJI data."""
+    """Load and preprocess the EJI data, aggregating to county level."""
     df = pd.read_csv('data/CDC_EJI_US.csv')
-    
-    # Replace -999 with NaN
     df = df.replace(-999, np.nan)
     
     # Convert relevant columns to numeric
@@ -52,129 +91,146 @@ def load_data():
     for col in numeric_columns:
         df[col] = pd.to_numeric(df[col], errors='coerce')
     
-    return df
+    # Create a unique county identifier combining state and county
+    df['county_id'] = df['StateDesc'] + '_' + df['COUNTY']
+    
+    # Group by the unique county identifier
+    groupby_cols = ['county_id', 'COUNTY', 'StateDesc']
+    
+    # Get all numeric columns for aggregation
+    agg_cols = [col for col in numeric_columns if col in df.columns]
+    
+    # Create aggregation dictionary (mean for all numeric columns)
+    agg_dict = {col: 'mean' for col in agg_cols}
+    
+    # Aggregate to county level
+    county_df = df.groupby(groupby_cols, as_index=False)[agg_cols].agg(agg_dict)
+    
+    print(f"Number of rows after aggregation: {len(county_df)}")
+    print(f"Number of unique counties: {len(county_df['COUNTY'].unique())}")
+    
+    return county_df
 
-# --- APP HEADER ---
-st.title("CDC Environmental Justice Index State Explorer")
-st.markdown("Explore county-level environmental justice indicators across states.")
+# --- VARIABLE SELECTION INTERFACE ---
+def render_variable_selector():
+    """Render the hierarchical variable selection interface."""
+    st.sidebar.header("Select Variables to Display")
+    
+    selected_vars = {'COUNTY': 'County'}  # Always include county
+    
+    def get_all_variables():
+        """Extract all variable codes and names from the nested structure."""
+        all_vars = {}
+        for group_content in EJI_VARIABLE_GROUPS.values():
+            if isinstance(group_content, dict):
+                for subgroup_content in group_content.values():
+                    if isinstance(subgroup_content, dict):
+                        all_vars.update(subgroup_content)
+                    else:
+                        # Handle any direct key-value pairs in the first level of nesting
+                        if isinstance(group_content, dict):
+                            all_vars.update({k: v for k, v in group_content.items() 
+                                          if not isinstance(v, dict)})
+            else:
+                # Handle any direct key-value pairs at the top level
+                if not isinstance(group_content, dict):
+                    all_vars[group_content] = group_content
+        return all_vars
 
-# Load data directly
+    # Add "Select All" option
+    if st.sidebar.checkbox("Select All Variables", False):
+        selected_vars.update(get_all_variables())
+    else:
+        # Iterate through main groups
+        for group_name, group_content in EJI_VARIABLE_GROUPS.items():
+            st.sidebar.subheader(group_name)
+            
+            if isinstance(group_content, dict):
+                # Handle nested subgroups
+                for subgroup_name, variables in group_content.items():
+                    if isinstance(variables, dict):
+                        st.sidebar.markdown(f"**{subgroup_name}**")
+                        for var_code, var_name in variables.items():
+                            if st.sidebar.checkbox(f"{var_name}", key=var_code):
+                                selected_vars[var_code] = var_name
+                    else:
+                        if st.sidebar.checkbox(f"{variables}", key=subgroup_name):
+                            selected_vars[subgroup_name] = variables
+            else:
+                if st.sidebar.checkbox(f"{group_content}", key=group_name):
+                    selected_vars[group_name] = group_content
+    
+    return selected_vars
+
+# --- MAIN APP ---
 try:
     df = load_data()
     
-    # State selection
+    st.title("CDC Environmental Justice Index State Explorer")
+    st.markdown("Explore county-level environmental justice indicators across states.")
+    
+    # State selection in main area
     states = sorted(df['StateDesc'].unique())
     selected_state = st.selectbox("Select a State", states)
     
+    # Variable selection in sidebar
+    selected_vars = render_variable_selector()
+    
     # Filter data for selected state
     state_data = df[df['StateDesc'] == selected_state].copy()
+    print(f"\nNumber of rows for {selected_state}: {len(state_data)}")
+    print(f"Number of unique counties in {selected_state}: {len(state_data['COUNTY'].unique())}")
     
-    # Select columns to display
-    display_columns = {
-        'COUNTY': 'County',
-        'EPL_MINRTY': 'Minority Population Percentile',
-        'EPL_POV200': 'Population Below 200% Poverty Percentile',
-        'EPL_UNEMP': 'Unemployment Percentile',
-        'EPL_DSLPM': 'Diesel Particulate Matter Percentile',
-        'EPL_CANCER': 'Cancer Risk Percentile',
-        'EPL_RESP': 'Respiratory Hazard Percentile',
-        'RPL_EJI': 'Overall EJ Index Percentile'
-    }
+    # Additional check for duplicates
+    duplicates = state_data.groupby('COUNTY').size()
+    if any(duplicates > 1):
+        print("\nDuplicate counties found:")
+        print(duplicates[duplicates > 1])
     
-    # Only include columns that exist in the dataset
-    available_columns = {k: v for k, v in display_columns.items() if k in state_data.columns}
+    # Create display dataframe with selected variables
+    available_vars = {k: v for k, v in selected_vars.items() if k in state_data.columns}
     
-    if available_columns:
-        # Create display dataframe
-        display_df = state_data[list(available_columns.keys())].copy()
-        display_df.columns = list(available_columns.values())
+    if len(available_vars) > 1:  # More than just County
+        display_df = state_data[list(available_vars.keys())].copy()
+        display_df.columns = list(available_vars.values())
         
-        # Convert percentile values from 0-1 to 0-100 and format them
+        # Convert percentiles from 0-1 to 0-100
         for col in display_df.columns:
-            if 'Percentile' in col and col != 'County':
+            if col != 'County' and col in display_df.columns:
                 display_df[col] = pd.to_numeric(display_df[col], errors='coerce') * 100
                 display_df[col] = display_df[col].round(1)
         
         # Display summary statistics
         st.subheader(f"Environmental Justice Summary for {selected_state}")
-        col1, col2, col3 = st.columns(3)
         
-        with col1:
-            st.metric(
-                "Number of Counties",
-                len(state_data)
-            )
-        
-        with col2:
-            avg_eji = state_data['RPL_EJI'].mean() * 100
-            st.metric(
-                "Average EJ Index Percentile",
-                f"{avg_eji:.1f}%" if pd.notnull(avg_eji) else "N/A"
-            )
-        
-        with col3:
-            high_risk_counties = len(state_data[state_data['RPL_EJI'] > 0.80])
-            st.metric(
-                "High Risk Counties (>80th percentile)",
-                high_risk_counties
-            )
-        
-        # Display county data table
+        # Display county data table with progress columns
         st.subheader("County-Level Data")
         
-        # Configure the dataframe display
+        # Create column configs
+        column_config = {
+            "County": st.column_config.TextColumn(
+                "County",
+                width="medium"
+            )
+        }
+        
+        # Add progress columns for percentile values
+        for col in display_df.columns:
+            if col != 'County':
+                column_config[col] = st.column_config.ProgressColumn(
+                    col,
+                    help=INDICATOR_DESCRIPTIONS.get(next(k for k, v in selected_vars.items() if v == col), ""),
+                    format="%d%%",
+                    min_value=0,
+                    max_value=100,
+                )
+        
+        # Display the dataframe
         st.dataframe(
-            display_df.sort_values('Overall EJ Index Percentile', ascending=False),
+            display_df.sort_values(next(iter(display_df.columns)), ascending=False),
+            column_config=column_config,
             hide_index=True,
-            use_container_width=True,
-            column_config={
-                "County": st.column_config.TextColumn(
-                    "County",
-                    width="medium"
-                ),
-                "Minority Population Percentile": st.column_config.ProgressColumn(
-                    "Minority Population",
-                    help="Percentile rank of minority population percentage",
-                    format="%d%%",
-                    min_value=0,
-                    max_value=100,
-                ),
-                "Population Below 200% Poverty Percentile": st.column_config.ProgressColumn(
-                    "Poverty Level",
-                    help="Percentile rank of population below 200% poverty level",
-                    format="%d%%",
-                    min_value=0,
-                    max_value=100,
-                ),
-                "Unemployment Percentile": st.column_config.ProgressColumn(
-                    "Unemployment",
-                    help="Percentile rank of unemployment rate",
-                    format="%d%%",
-                    min_value=0,
-                    max_value=100,
-                ),
-                "Diesel Particulate Matter Percentile": st.column_config.ProgressColumn(
-                    "Diesel Pollution",
-                    help="Percentile rank of diesel particulate matter concentration",
-                    format="%d%%",
-                    min_value=0,
-                    max_value=100,
-                ),
-                "Cancer Risk Percentile": st.column_config.ProgressColumn(
-                    "Cancer Risk",
-                    help="Percentile rank of cancer risk",
-                    format="%d%%",
-                    min_value=0,
-                    max_value=100,
-                ),
-                "Overall EJ Index Percentile": st.column_config.ProgressColumn(
-                    "Overall EJ Index",
-                    help="Overall Environmental Justice Index percentile",
-                    format="%d%%",
-                    min_value=0,
-                    max_value=100,
-                ),
-            }
+            use_container_width=True
         )
         
         # Add download button
@@ -195,7 +251,7 @@ try:
         - Counties with "N/A" values lack sufficient data for that indicator
         """)
     else:
-        st.error("Required columns not found in the dataset. Please ensure you're using the correct CDC EJI data format.")
+        st.warning("Please select at least one variable to display from the sidebar.")
 
 except Exception as e:
     st.error(f"Error loading data: {str(e)}")
