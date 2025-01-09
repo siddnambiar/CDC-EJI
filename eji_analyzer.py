@@ -107,6 +107,7 @@ def render_variable_selector():
 df = load_data()
 st.title("CDC Environmental Justice Index State Explorer")
 st.markdown("Explore county-level environmental justice indicators across states.")
+st.markdown("The Environmental Justice Index (EJI) is a composite measure that combines environmental, social, and health vulnerability indicators to provide a comprehensive view of potential environmental justice concerns. Higher percentile values indicate a greater potential for environmental injustice.")
 selected_state = st.selectbox("Select a State", sorted(df['StateDesc'].unique()))
 selected_vars = render_variable_selector()
 state_data = df[df['StateDesc'] == selected_state].copy()
@@ -116,6 +117,8 @@ if len(available_vars) > 1:
     tab1, tab2 = st.tabs(["📊 All Counties Overview", "🔍 County Comparison"])
     
     with tab1:
+        st.markdown("### All Counties Overview")
+        st.markdown("This table displays the percentile ranking for each selected indicator across all counties in the chosen state. A higher percentile indicates a greater potential for environmental injustice.")
         display_df = state_data[list(available_vars.keys())].copy()
         display_df.columns = list(available_vars.values())
         for col in display_df.columns:
@@ -128,6 +131,8 @@ if len(available_vars) > 1:
         st.dataframe(display_df.sort_values(next(iter(display_df.columns)), ascending=False), column_config=column_config, hide_index=True, use_container_width=True)
     
     with tab2:
+        st.markdown("### County Comparison")
+        st.markdown("Select up to 10 counties to compare their Environmental Justice Index (EJI) and related indicator values. This allows you to directly compare specific areas within the selected state.")
         selected_counties = st.multiselect("Select counties to compare (max 10)", options=sorted(state_data['COUNTY'].unique()), default=[state_data['COUNTY'].iloc[0]], max_selections=10)
         
         if selected_counties:
@@ -135,12 +140,14 @@ if len(available_vars) > 1:
             
             if 'Overall Environmental Justice Index' in comparison_df.columns:
                 st.subheader("Key Metrics")
+                st.markdown("The Overall Environmental Justice Index is presented below for each selected county, providing a quick view of its composite risk score.")
                 cols = st.columns(len(selected_counties))
                 for idx, county in enumerate(selected_counties):
                     with cols[idx]:
                         st.metric(f"{county} County", f"{comparison_df[comparison_df['County'] == county]['Overall Environmental Justice Index'].iloc[0]:.1f}%")
             
             st.subheader("Comparative Analysis")
+            st.markdown("The comparative analysis displays a bar chart for each selected variable, allowing for easy visual comparison of the selected counties. Each bar represents the percentile for that county within a specific category.")
             comparison_long = comparison_df.melt(id_vars=['County'], var_name='Indicator', value_name='Percentile')
             chart = alt.Chart(comparison_long).mark_bar().encode(
                 y=alt.Y('County:N', title=None, axis=alt.Axis(labelLimit=200, labelAngle=0)),
